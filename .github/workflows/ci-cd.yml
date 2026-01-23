@@ -1,0 +1,111 @@
+name: CI-CD-ML-Deployment
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # =========================
+  # JOB 1: TRAIN (CI)
+  # =========================
+  train:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run training script
+        run: |
+          python train.py
+
+      - name: Extract R2 metric
+        id: metrics
+        run: |
+          R2=$(python - <<EOF
+          import json
+          with open("outputs/evaluation/metrics.json") as f:
+              data=json.load(f)
+          print(data["RandomForest"]["R2_Score"])
+          EOF
+          )
+          echo "R2_SCORE=$R2" >> $GITHUB_ENV
+          echo "Current R2 Score: $R2"
+
+      - name: Upload model and metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: |
+            outputs/model/RandomForest.pkl
+            outputs/evaluation/metrics.json
+
+
+  # =========================
+  # JOB 2: DEPLOY (CD)
+  # =========================
+  deploy:
+    needs: train
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download trained artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-model
+          path: artifacts
+
+      - name: Compare metrics
+        run: |
+          echo "Best R2 so far: ${{ vars.BEST_R2 }}"
+          echo "Current R2: ${{ env.R2_SCORE }}"
+
+          python - <<EOF
+          best=float("${{ vars.BEST_R2 }}")
+          current=float("${{ env.R2_SCORE }}")
+
+          if current <= best:
+              print("2022BCS0044 ---- Metric did not improve")
+              exit(1)
+          else:
+              print("Metric improved, proceeding to deployment")
+          EOF
+
+      - name: Replace model for deployment
+        run: |
+          cp artifacts/RandomForest.pkl lab3/model/model.pkl
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/wine_predict_2022bcs0044:v1 lab3
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/wine_predict_2022bcs0044:v1
+
+      - name: Update BEST_R2 variable
+        run: |
+          curl -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/variables/BEST_R2 \
+            -d "{\"name\":\"BEST_R2\",\"value\":\"${{ env.R2_SCORE }}\"}"
