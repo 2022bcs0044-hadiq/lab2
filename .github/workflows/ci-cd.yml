@@ -45,13 +45,11 @@ jobs:
           echo "r2=$R2" >> $GITHUB_OUTPUT
           echo "Current R2 Score: $R2"
 
-      - name: Upload model and metrics
+      - name: Upload metrics as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: trained-artifacts
-          path: |
-            outputs/model/RandomForest.pkl
-            outputs/evaluation/metrics.json
+          name: metrics
+          path: outputs/evaluation/metrics.json
 
 
   # =========================
@@ -64,12 +62,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Download trained artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: trained-artifacts
-          path: artifacts
 
       - name: Compare metrics
         run: |
@@ -86,10 +78,6 @@ jobs:
           else:
               print("Metric improved, proceeding to deployment")
           EOF
-
-      - name: Replace model for deployment
-        run: |
-          cp artifacts/RandomForest.pkl lab3/model/model.pkl
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
