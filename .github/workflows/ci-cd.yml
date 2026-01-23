@@ -12,8 +12,11 @@ jobs:
   train:
     runs-on: ubuntu-latest
 
+    outputs:
+      r2_score: ${{ steps.get_metrics.outputs.r2 }}
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
@@ -30,22 +33,22 @@ jobs:
           python train.py
 
       - name: Extract R2 metric
-        id: metrics
+        id: get_metrics
         run: |
           R2=$(python - <<EOF
           import json
           with open("outputs/evaluation/metrics.json") as f:
-              data=json.load(f)
+              data = json.load(f)
           print(data["RandomForest"]["R2_Score"])
           EOF
           )
-          echo "R2_SCORE=$R2" >> $GITHUB_ENV
+          echo "r2=$R2" >> $GITHUB_OUTPUT
           echo "Current R2 Score: $R2"
 
       - name: Upload model and metrics
         uses: actions/upload-artifact@v4
         with:
-          name: trained-model
+          name: trained-artifacts
           path: |
             outputs/model/RandomForest.pkl
             outputs/evaluation/metrics.json
@@ -59,23 +62,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download trained artifacts
         uses: actions/download-artifact@v4
         with:
-          name: trained-model
+          name: trained-artifacts
           path: artifacts
 
       - name: Compare metrics
         run: |
           echo "Best R2 so far: ${{ vars.BEST_R2 }}"
-          echo "Current R2: ${{ env.R2_SCORE }}"
+          echo "Current R2: ${{ needs.train.outputs.r2_score }}"
 
           python - <<EOF
-          best=float("${{ vars.BEST_R2 }}")
-          current=float("${{ env.R2_SCORE }}")
+          best = float("${{ vars.BEST_R2 }}")
+          current = float("${{ needs.train.outputs.r2_score }}")
 
           if current <= best:
               print("2022BCS0044 ---- Metric did not improve")
@@ -108,4 +111,4 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/actions/variables/BEST_R2 \
-            -d "{\"name\":\"BEST_R2\",\"value\":\"${{ env.R2_SCORE }}\"}"
+            -d "{\"name\":\"BEST_R2\",\"value\":\"${{ needs.train.outputs.r2_score }}\"}"
